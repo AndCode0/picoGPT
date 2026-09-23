@@ -106,8 +106,8 @@ if __name__ == "__main__":
     # import sys
     # vocab_filepath, merges_filepath = sys.argv[1:]
     import time
-    vocab_filepath = Path("./trained_bpe/owt_vocab_32k.json")
-    merges_filepath = Path("./trained_bpe/owt_merges_32k.txt")
+    vocab_filepath = Path("./trained_bpe/owt_train/vocab_32k.json")
+    merges_filepath = Path("./trained_bpe/owt_train/merges_32k.txt")
     text = Path("../data/owt_train.txt")
     original_text = text.read_text()
     # raw_bytes_count = len(list(tinystory_sample.read_bytes()))

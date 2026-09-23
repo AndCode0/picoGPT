@@ -49,24 +49,12 @@ def init_run(project, mode=None, name=None, config=None):
     return run
 
 
-def timing_backend(device):
-    """(event_factory, synchronize) for the device torch is running on.
-
-    Events are backend-specific: a plain torch.Event records on the CPU stream,
-    so on an async device it would time how long the queue takes to fill rather
-    than how long the work takes.
-    """
+def sync_device(device):
+    """Block the host until the device queue is drained (no-op on CPU)."""
     if device.type == "cuda":
-        return torch.cuda.Event, torch.cuda.synchronize
-    if device.type == "mps":
-        return torch.mps.Event, torch.mps.synchronize
-    return torch.Event, (lambda: None)
-
-
-def elapsed_ms(start, end, synchronize):
-    """Milliseconds between two recorded events; blocks until both complete."""
-    synchronize()
-    return start.elapsed_time(end)
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
 
 
 DTYPES = {
@@ -169,14 +157,16 @@ if __name__ == "__main__":
         assert args.batch_size * args.training_steps * args.context_len < 4.1e7,f"""
     Let's keep it humble. Fixing the batch size and the context length 
     -> training_steps: {4.1e7//(args.batch_size * args.context_len)}"""
-    assert args.warmup_it < args.cos_cycle_it, "Scheduler: warmup_it must be smaller than cos_cycle_it"
+    assert args.warmup_it < args.cos_cycle_it, \
+        "Scheduler: warmup_it must be smaller than cos_cycle_it (which defaults to training_steps)"
     assert args.log_every > 0, "log_every must be strictly greater than 0"
     assert len(dataset) > args.context_len, f"""
     A dataset (len: {len(dataset)}) shorter than context_len + 1 ({args.context_len}) will produce invalid sampling bounds.
     """
-    assert len(val_dataset) > args.context_len, f"""
-    A validation dataset (len: {len(val_dataset)}) shorter than context_len + 1 ({args.context_len}) will produce 
-    invalid sampling bounds."""
+    if val_dataset is not None:
+        assert len(val_dataset) > args.context_len, f"""
+        A validation dataset (len: {len(val_dataset)}) shorter than context_len + 1 ({args.context_len}) will produce 
+        invalid sampling bounds."""
 
     model = tlm.TransformerLM(
         args.vocab_size, args.context_len, args.num_layers, args.rope_theta,
@@ -225,9 +215,6 @@ if __name__ == "__main__":
     logger.info("model has %.2fM parameters", n_params / 1e6)
     run.summary["n_params"] = n_params
 
-    new_event, sync_device = timing_backend(device)
-    step_start, step_end = new_event(enable_timing=True), new_event(enable_timing=True)
-    eval_start, eval_end = new_event(enable_timing=True), new_event(enable_timing=True)
     best_score = float("inf")
 
     try:
@@ -235,7 +222,7 @@ if __name__ == "__main__":
             if stop_requested:
                 interrupted = True
                 break
-            step_start.record()
+            step_t0 = time.perf_counter()
 
             inputs, targets = tlm.data_loading(dataset, args.batch_size, args.context_len, train_gen, device)
 
@@ -262,11 +249,11 @@ if __name__ == "__main__":
                 skipped_steps += 1
 
             optimizer.zero_grad(set_to_none=True)
-            step_end.record()
 
             # train + perf scalars every log_every steps, independent of validation
             if step % args.log_every == 0:
-                step_s = elapsed_ms(step_start, step_end, sync_device) / 1e3  # events report ms
+                sync_device(device)
+                step_s = time.perf_counter() - step_t0
                 tok_per_s = tokens_per_step / step_s if step_s > 0 else float("nan")
                 loss_v, grad_norm_v = loss.item(), total_norm.item()
                 logger.info("step %d/%d | loss %.4f | lr %.2e | grad_norm %.2f | %.1f ms | %.0f tok/s",
@@ -282,11 +269,11 @@ if __name__ == "__main__":
                 }, step=step)
 
             if val_dataset is not None and args.eval_every > 0 and step % args.eval_every == 0:
-                sync_device()  # don't bill pending step work to the eval timer
-                eval_start.record()
+                sync_device(device)  # don't bill pending step work to the eval timer
+                eval_t0 = time.perf_counter()
                 vl = eval_loss()
-                eval_end.record()
-                eval_s = elapsed_ms(eval_start, eval_end, sync_device) / 1e3
+                sync_device(device)
+                eval_s = time.perf_counter() - eval_t0
                 eval_tok_per_s = eval_tokens / eval_s if eval_s > 0 else float("nan")
                 run.log({
                     "val/loss": vl,
