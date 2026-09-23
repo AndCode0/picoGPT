@@ -1,3 +1,4 @@
+import argparse
 from typing import BinaryIO
 import regex as re
 import heapq
@@ -132,6 +133,11 @@ class _HeapItem:
         if self.count != other.count:
             return self.count > other.count # we want a min-heap to pop the HIGHEST count
         return self.key > other.key
+
+def _size_label(n: int) -> str:
+    """32000 -> "32k"; a count that isn't a whole thousand stays exact (327 -> "327")."""
+    return f"{n // 1000}k" if n and n % 1000 == 0 else str(n)
+
 
 def train_bpe(
         input_path: str,
@@ -297,25 +303,42 @@ def train_bpe(
 
 if __name__ == "__main__":
     import time
-    import sys
-    path, size, n_processes, *rest = sys.argv[1:]
-    size = int(size)
-    n_processes = int(n_processes)
-    output_dir = Path(rest[0]) if rest else Path("trained_bpe/")
+
+    ap = argparse.ArgumentParser(description="Train a byte-level BPE tokenizer.")
+    ap.add_argument("--corpus", type=Path, required=True, help="Input text file")
+    ap.add_argument("--vocab_size", type=int, default=32000,
+                    help="Total vocabulary size, byte tokens and specials included")
+    ap.add_argument("--num_processes", type=int, default=os.cpu_count(),
+                    help="Pre-tokenization workers (default: all cores)")
+    ap.add_argument("--special_tokens", type=str, nargs="*", default=["<|endoftext|>"])
+    ap.add_argument("--output_dir", type=Path, default=Path("trained_bpe/"))
+    ap.add_argument("--name", type=str, default=None,
+                    help="Subdirectory of --output_dir; defaults to the corpus filename without extension")
+    args = ap.parse_args()
+
+    # trained_bpe/<corpus name>/vocab_<size>.json and merges_<size>.txt,
+    # e.g. trained_bpe/owt_train/vocab_32k.json
+    out_dir = args.output_dir / (args.name or args.corpus.stem)
 
     t0 = time.perf_counter()
     vocab, merges = train_bpe(
-        path,
-        vocab_size=size,
-        special_tokens=["<|endoftext|>"],
-        num_processes=n_processes
+        args.corpus,
+        vocab_size=args.vocab_size,
+        special_tokens=args.special_tokens,
+        num_processes=args.num_processes
     )
     print(f"{len(vocab)} tokens, {len(merges)} merges "
           f"in {time.perf_counter() - t0:.2f}s")
     print("first merges:", merges[:10])
     print("longest token:", max(vocab.values(), key=len))
 
-    if output_dir:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        save_vocab(vocab, output_dir / "owl_vocab_32k.json")
-        save_merges(merges, output_dir / "owl_merges_32k.txt")
+    # label the files with what came out, not with what was asked for: a corpus
+    # that runs out of merge candidates stops short of --vocab_size
+    size_label = _size_label(len(vocab))
+    vocab_path = out_dir / f"vocab_{size_label}.json"
+    merges_path = out_dir / f"merges_{size_label}.txt"
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_vocab(vocab, vocab_path)
+    save_merges(merges, merges_path)
+    print(f"wrote {vocab_path}, {merges_path}")
