@@ -1,0 +1,26 @@
+[project]
+name = "picogpt"
+version = "0.1.0"
+description = "A small GPT: transformer LM, BPE tokenizer and training loop"
+requires-python = ">=3.12"
+dependencies = [
+    # core
+    "numpy>=2.0",
+    "torch>=2.6",          # linux/CUDA users: see the note at the bottom of this file
+    # typing shorthands used by nn_utils.py / TransformerLM.py
+    "einx>=0.3.0",
+    "jaxtyping>=0.2.30",
+    # fast regex for the BPE pre-tokenizer
+    "regex>=2024.0.0",
+    # experiment tracking; optional at runtime (train.py degrades to a no-op if
+    # it is missing or you are not logged in — see init_run() in train.py)
+    "wandb>=0.18",
+]
+
+# No [build-system]: the python files in this repo are plain top-level modules
+# (`import TransformerLM as tlm`), so there is nothing to install. Scripts just
+# have to be run from the repo root, e.g. `uv run train.py ...`.
+#
+# Linux/CUDA note: PyPI's `torch` wheel is CPU-only there. For CUDA installs use
+#   uv add torch --index https://download.pytorch.org/whl/cu128
+# (or add an [tool.uv.sources] / [[tool.uv.index]] entry for your CUDA version).

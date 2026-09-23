@@ -1,0 +1,20 @@
+# --- experiment tracking / secrets
+.env
+wandb/
+
+# --- datasets & tokenizer artifacts (large, regenerate locally)
+*.npy
+trained_bpe/
+checkpoints/
+
+# --- python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- editors / OS
+.DS_Store
+.idea/
+.vscode/
